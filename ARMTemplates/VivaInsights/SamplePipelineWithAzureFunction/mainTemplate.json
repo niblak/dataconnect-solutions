@@ -174,6 +174,15 @@
                 "[resourceId('Microsoft.Storage/storageAccounts/', variables('destinationAdlsAccountName'))]"
             ],
             "location": "East US 2",
+            "properties": {
+                "typeProperties": {
+                    "tableName": "[variables('datasetName')]",
+                    "ScenarioDescription": "Your Application Name (Application ID: 00000000-0000-0000-0000-000000000000)",
+                    "dateFilterColumn": "MetricDate",
+                    "startTime": "2018-10-01T01:00:00.000Z",
+                    "endTime": "2019-06-07T08:00:00.000Z",
+                }
+            }
             "resources": [{
                     "name": "[concat(variables('factoryName'), '/AzureSelfHosted')]",
                     "type": "Microsoft.DataFactory/factories/integrationRuntimes",
@@ -310,55 +319,55 @@
                         "annotations": [],
                         "type": "Office365Table",
                         "structure": [{
-                                "name": "AfterHoursCollaboration",
+                                "name": "After-hours collaboration hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "AfterHoursCollaborationEmails",
+                                "name": "After-hours email hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "AfterHoursCollaborationInstantMessages",
+                                "name": "After-hours chat hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "AfterHoursCollaborationMeetings",
+                                "name": "After-hours meeting hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "AfterHoursCollaborationScheduledCalls",
+                                "name": "After-hours scheduled call hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "AfterHoursCollaborationAdhocCalls",
+                                "name": "After-hours unscheduled call hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHours",
+                                "name": "Collaboration hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursEmails",
+                                "name": "Email hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursExternal",
+                                "name": "External collaboration hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursInstantMessages",
+                                "name": "Chat hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursMeetings",
+                                "name": "Meeting hours",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursScheduledCalls",
+                                "name": "Scheduled call hours"
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "CollaborationHoursAdhocCalls",
+                                "name": "Unscheduled call hours",
                                 "type": "double",
                                 "description": " "
                             }, {
@@ -366,15 +375,26 @@
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "OneOnOneMeetingHours",
+                                "name": "Conflicting meeting hours",
+                                "type": "double",
+                                "description": " "
+                            },
+                            {
+                                "name": "Meeting hours with manager",
+                                "type": "double",
+                                "description": " "
+                            },
+                            {
+                                "name": "Meeting hours with manager 1:1",
+                                "type": "double",
+                                "description": " "
+                            },
+                            {
+                                "name": "Meeting hours with skip level",
                                 "type": "double",
                                 "description": " "
                             }, {
-                                "name": "SkipLevelMeetingHours",
-                                "type": "double",
-                                "description": " "
-                            }, {
-                                "name": "TotalFocusHours",
+                                "name": "Available-to-focus hours",
                                 "type": "double",
                                 "description": " "
                             }, {
