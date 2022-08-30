@@ -181,7 +181,7 @@
                     "tableName": "[variables('datasetName')]",
                     "ScenarioDescription": "Your Application Name (Application ID: 00000000-0000-0000-0000-000000000000)",
                     "dateFilterColumn": "MetricDate",
-                    "startTime": "[utcNow('yyyy-MM-dd')]",
+                    "startTime": "[variables('endTime')]",
                     "endTime": "[variables('endTime')]"
                 }
             }
