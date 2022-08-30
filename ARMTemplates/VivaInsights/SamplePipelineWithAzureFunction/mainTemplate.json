@@ -38,8 +38,8 @@
         "AppServicePlanName": "[concat('ASP-', uniqueString(resourceGroup().id))]",
         "functionStorageName": "[concat('fctstor', uniqueString(resourceGroup().id))]",
         "datasetName": "VivaInsightsDataset_v0",
-        "startTime": "2018-10-01T01:00:00.000Z",
-        "endTime": "2019-06-07T08:00:00.000Z"
+        "endTime": "[utcNow('yyyy-MM-dd THH:mm:ss zzzz')]",
+        "startTime": "[dateTimeAdd(variables('endTime'), '-P2W', 'yyyy-MM-dd THH:mm:ss zzzz')]"
     },
     "resources": [
         // Script to get the service principal from an app registration in the Customer subscription. Written by MGDC team.
@@ -181,7 +181,7 @@
                     "tableName": "[variables('datasetName')]",
                     "ScenarioDescription": "Your Application Name (Application ID: 00000000-0000-0000-0000-000000000000)",
                     "dateFilterColumn": "MetricDate",
-                    "startTime": "[variables('startTime')]",
+                    "startTime": "[utcNow('yyyy-MM-dd')]",
                     "endTime": "[variables('endTime')]"
                 }
             }
