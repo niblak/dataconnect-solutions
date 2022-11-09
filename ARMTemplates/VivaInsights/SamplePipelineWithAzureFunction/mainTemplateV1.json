@@ -67,7 +67,7 @@
             "kind": "StorageV2",
             "properties": {
                 "minimumTlsVersion": "TLS1_2",
-                "allowBlobPublicAccess": true,
+                "allowBlobPublicAccess": false,
                 "allowSharedKeyAccess": true,
                 "isHnsEnabled": false,
                 "networkAcls": {
@@ -126,7 +126,7 @@
             "properties": {
                 "defaultEncryptionScope": "$account-encryption-key",
                 "denyEncryptionScopeOverride": false,
-                "publicAccess": "Container"
+                "publicAccess": "None"
             }
         },
         // Add Contributor role assignment to the Partner storage account container
@@ -226,7 +226,7 @@
                             "location": {
                                 "type": "AzureBlobFSLocation",
                                 "folderPath": {
-                                    "value": "@concat(pipeline().RunId, '/VivaInsights/', variables('AzureActiveDirectoryTenantId'))",
+                                    "value": "@concat(pipeline().RunId, '/VivaInsights/', parameters('AzureActiveDirectoryTenantId'))",
                                     "type": "Expression"
                                 },
                                 "fileSystem": "datasets"
@@ -254,7 +254,7 @@
                             "location": {
                                 "type": "AzureBlobFSLocation",
                                 "folderPath": {
-                                    "value": "@concat(pipeline().RunId, '/AADUser/', variables('AzureActiveDirectoryTenantId'))",
+                                    "value": "@concat(pipeline().RunId, '/AADUser/', parameters('AzureActiveDirectoryTenantId'))",
                                     "type": "Expression"
                                 },
                                 "fileSystem": "datasets"
@@ -648,8 +648,7 @@
                             }
                         ],
                         "typeProperties": {
-                            "tableName": "[variables('datasetName')]",
-                            "ScenarioDescription": "Your Application Name (Application ID: 00000000-0000-0000-0000-000000000000)"
+                            "tableName": "[variables('datasetName')]"
                         }
                     },
                     "dependsOn": [
