@@ -784,7 +784,7 @@
                                         "referenceName": "[concat('Office365DataSet', variables('datasetName'))]",
                                         "type": "DatasetReference",
                                         "parameters": {
-                                            "RequestStartDate": "@if(empty(pipeline().parameters.RequestStartDate), addDays(pipeline().TriggerTime, pipeline().parameters.DefaultLookbackWindowDays), pipeline().parameters.RequestStartDate)",
+                                            "RequestStartDate": "@if(empty(pipeline().parameters.RequestStartDate), subtractFromTime(pipeline().TriggerTime, pipeline().parameters.DefaultLookbackWindowDays, 'Day'), pipeline().parameters.RequestStartDate)",
                                             "RequestEndDate": "@if(empty(pipeline().parameters.RequestEndDate), pipeline().TriggerTime, pipeline().parameters.RequestEndDate)",
                                             "AggregationType": "@pipeline().parameters.AggregationType"
                                         }
@@ -939,7 +939,7 @@
                             },
                             "DefaultLookbackWindowDays": {
                                 "type": "int",
-                                "defaultValue": -14 // MUST be a negative number
+                                "defaultValue": 14
                             },
                             "AggregationType": {
                                 "type": "string",
