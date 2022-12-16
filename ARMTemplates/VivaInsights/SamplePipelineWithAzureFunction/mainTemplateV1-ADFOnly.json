@@ -185,9 +185,14 @@
                         },
                         "annotations": [],
                         "parameters": {
-                            "PipelineStartTime": {
+                            "RequestStartDate": {
                                 "type": "string"
-
+                            },
+                            "RequestEndDate": {
+                                "type": "string"
+                            },
+                            "AggregationType": {
+                                "type": "string"
                             }
                         },
                         "type": "Office365Table",
@@ -541,10 +546,10 @@
                         "typeProperties": {
                             "tableName": "[variables('datasetName')]",
                             "dateFilterColumn": "MetricDate",
-                            "startTime": "@addDays(dataset().PipelineStartTime, -90)",
-                            "endTime": "@dataset().PipelineStartTime",
+                            "startTime": "@dataset().RequestStartDate",
+                            "endTime": "@dataset().RequestEndDate",
                             "AdditionalDataSetProperties": {
-                                "aggregationType": "Week"
+                                "aggregationType": "@dataset().AggregationType"
                             }
                         }
                     },
@@ -613,7 +618,9 @@
                                         "referenceName": "[concat('Office365DataSet', variables('datasetName'))]",
                                         "type": "DatasetReference",
                                         "parameters": {
-                                            "PipelineStartTime": "@pipeline().TriggerTime"
+                                            "RequestStartDate": "@if(empty(pipeline().parameters.RequestStartDate), addDays(pipeline().TriggerTime, pipeline().parameters.DefaultLookbackWindowDays), pipeline().parameters.RequestStartDate)",
+                                            "RequestEndDate": "@if(empty(pipeline().parameters.RequestEndDate), pipeline().TriggerTime, pipeline().parameters.RequestEndDate)",
+                                            "AggregationType": "@pipeline().parameters.AggregationType"
                                         }
                                     }
                                 ],
@@ -757,6 +764,22 @@
                                 ]
                             }
                         ],
+                        "parameters": {
+                            "RequestStartDate": {
+                                "type": "string"
+                            },
+                            "RequestEndDate": {
+                                "type": "string"
+                            },
+                            "DefaultLookbackWindowDays": {
+                                "type": "int",
+                                "defaultValue": -14 // MUST be a negative number
+                            },
+                            "AggregationType": {
+                                "type": "string",
+                                "defaultValue": "Week"
+                            }
+                        },
                         "annotations": []
                     },
                     "dependsOn": [
