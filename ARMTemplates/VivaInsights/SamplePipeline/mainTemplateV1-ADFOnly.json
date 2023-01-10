@@ -26,6 +26,12 @@
             "metadata": {
                 "description": "The name of the Azure Data Factory instance containing your pipeline logic."
             }
+        },
+        "DataLakeStorageEndpoint": {
+            "type": "string",
+            "metadata": {
+                "description": "The endpoint of your Data Lake storage account (this can be found under Settings -> Endpoints -> Data Lake Storage primary endpoint in your Storage Account)."
+            }
         }
     },
     // Variables can apply functions to parameters or be hardcoded values.
@@ -75,7 +81,7 @@
                         "annotations": [],
                         "type": "AzureBlobFS",
                         "typeProperties": {
-                            "url": "[concat('https://', variables('destinationAdlsAccountName'), '.dfs.core.windows.net/')]",
+                            "url": "[parameters('DataLakeStorageEndpoint')]",
                             "tenant": "[subscription().tenantId]",
                             "servicePrincipalId": "[parameters('AppId')]",
                             "servicePrincipalCredentialType": "ServicePrincipalKey",
