@@ -15,32 +15,201 @@
                 "description": "The secret for the Azure AD Application. App Secret is required for Microsoft Graph Data Connect (see documentation https://docs.microsoft.com/en-us/graph/data-connect-quickstart?tabs=Microsoft365&tutorial-step=2)."
             }
         },
-        "AzureActiveDirectoryTenantId":{ 
+        "AzureActiveDirectoryTenantId": {
             "type": "string",
             "metadata": {
                 "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
+            }
+        },
+        "DataFactoryName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the Azure Data Factory instance containing your pipeline logic."
             }
         }
     },
     // Variables can apply functions to parameters or be hardcoded values.
     "variables": {
-        // Name to give the Azure Data Factory pipeline created by the ARM template.
-        "factoryName": "[concat('M365-', uniqueString(resourceGroup().id))]",
         // Name given to the storage account created in the Partner subscription.
         "destinationAdlsAccountName": "[concat('astore', uniqueString(resourceGroup().id))]",
+        // Name given to the key vault created in the Partner subscription.
+        "keyVaultName": "[concat('keyvault', uniqueString(resourceGroup().id))]",
         "datasetName": "VivaInsightsDataset_PersonReport_v1"
     },
     "resources": [
+        // Script to get the service principal from an app registration in the Partner subscription.
+        {
+            "apiVersion": "2020-10-01",
+            "kind": "AzurePowerShell",
+            "location": "[resourceGroup().location]",
+            "name": "ApplicationScript",
+            "properties": {
+                "forceUpdateTag": "1",
+                "azPowerShellVersion": "8.0",
+                "environmentVariables": [{
+                        "name": "AppSecret",
+                        "secureValue": "[parameters('AppSecret')]"
+                    }
+                ],
+                "arguments": "[format(' -AppID {0} -TenantId {1} -AppToGet {2}', parameters('AppId'), subscription().tenantId, parameters('AppId'))]",
+                "primaryScriptUri": "https://raw.githubusercontent.com/niblak/dataconnect-solutions/vivaarmtemplates/ARMTemplates/SupportScripts/GetServicePricipalId.ps1",
+                "timeout": "PT30M",
+                "cleanupPreference": "OnSuccess",
+                "retentionInterval": "P1D",
+                "dependsOn": []
+            },
+            "type": "Microsoft.Resources/deploymentScripts"
+        },
+        // Storage account in Partner subscription
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2021-01-01",
+            "name": "[variables('destinationAdlsAccountName')]",
+            "location": "eastus2",
+            "sku": {
+                "name": "Standard_RAGRS",
+                "tier": "Standard"
+            },
+            "kind": "StorageV2",
+            "properties": {
+                "minimumTlsVersion": "TLS1_2",
+                "allowBlobPublicAccess": false,
+                "allowSharedKeyAccess": true,
+                "isHnsEnabled": false,
+                "networkAcls": {
+                    "bypass": "AzureServices",
+                    "virtualNetworkRules": [],
+                    "ipRules": [],
+                    "defaultAction": "Allow"
+                },
+                "supportsHttpsTrafficOnly": true,
+                "encryption": {
+                    "services": {
+                        "file": {
+                            "keyType": "Account",
+                            "enabled": true
+                        },
+                        "blob": {
+                            "keyType": "Account",
+                            "enabled": true
+                        }
+                    },
+                    "keySource": "Microsoft.Storage"
+                },
+                "accessTier": "Hot"
+            }
+        },
+        // Create a blob service resource (needed for blob operations) in the Partner storage account
+        {
+            "type": "Microsoft.Storage/storageAccounts/blobServices",
+            "apiVersion": "2021-01-01",
+            "name": "[concat(variables('destinationAdlsAccountName'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('destinationAdlsAccountName'))]"
+            ],
+            "sku": {
+                "name": "Standard_RAGRS",
+                "tier": "Standard"
+            },
+            "properties": {
+                "cors": {
+                    "corsRules": []
+                },
+                "deleteRetentionPolicy": {
+                    "enabled": false
+                }
+            }
+        },
+        // Create a container in the Partner storage account
+        {
+            "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+            "apiVersion": "2021-01-01",
+            "name": "[concat(variables('destinationAdlsAccountName'), '/default/datasets')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('destinationAdlsAccountName'), 'default')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('destinationAdlsAccountName'))]"
+            ],
+            "properties": {
+                "defaultEncryptionScope": "$account-encryption-key",
+                "denyEncryptionScopeOverride": false,
+                "publicAccess": "None"
+            }
+        },
+        // Add Contributor role assignment to the Partner storage account container
+        {
+            "type": "Microsoft.Storage/storageAccounts/providers/roleAssignments",
+            "apiVersion": "2018-07-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('destinationAdlsAccountName'), 'default', 'datasets')]"
+            ],
+            "name": "[concat(variables('destinationAdlsAccountName'),'/Microsoft.Authorization/',guid(resourceGroup().id))]",
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalId": "[reference('ApplicationScript').outputs.PrincipalId]"
+            }
+        },
+        // Add Storage Blob Data Contributor role assignment to the Partner storage account container
+        {
+            "type": "Microsoft.Storage/storageAccounts/blobServices/containers/providers/roleAssignments",
+            "apiVersion": "2018-07-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('destinationAdlsAccountName'), 'default', 'datasets')]"
+            ],
+            "name": "[concat(variables('destinationAdlsAccountName'), '/default/datasets/Microsoft.Authorization/', guid(concat('blobdatacontributor', resourceGroup().id)))]",
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[reference('ApplicationScript').outputs.PrincipalId]"
+            }
+        },
+        // Add Key Vault in the Partner subscription.
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "apiVersion": "2022-07-01",
+            "name": "[variables('keyVaultName')]",
+            "location": "eastus2",
+            "properties": {
+                "sku": {
+                    "family": "A",
+                    "name": "Standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "accessPolicies": [],
+                "enabledForDeployment": false,
+                "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": false,
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": 90,
+                "enableRbacAuthorization": true,
+                "vaultUri": "[concat('https://', variables('keyVaultName'), '.vault.azure.net/')]",
+                "provisioningState": "Succeeded",
+                "publicNetworkAccess": "Enabled"
+            }
+        },
+        // Add Key Vault Crypto User role assignment to the Partner Key Vault.
+        {
+            "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[concat(variables('keyVaultName'),'/Microsoft.Authorization/',guid(concat('keyvault', resourceGroup().id)))]", 
+            "dependsOn": [ 
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+            ], 
+            "properties": { 
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '12338af0-0e69-4776-bea7-57ae8d297424')]", 
+                "principalId": "[reference('ApplicationScript').outputs.PrincipalId]" 
+            } 
+        },
         // Add Azure Data Factory Resource
         {
-            "name": "[variables('factoryName')]",
+            "name": "[parameters('DataFactoryName')]",
             "apiVersion": "2018-06-01",
             "type": "Microsoft.DataFactory/factories",
             "comments": "Creates the ADF pipeline that copies data from O365 to the newly created destination ADLS.",
-            "dependsOn": [],
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/', variables('destinationAdlsAccountName'))]"
+            ],
             "location": "East US 2",
             "resources": [{
-                    "name": "[concat(variables('factoryName'), '/AzureSelfHosted')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/AzureSelfHosted')]",
                     "type": "Microsoft.DataFactory/factories/integrationRuntimes",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -57,12 +226,12 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define Partner ADLS sink
                 {
-                    "name": "[concat(variables('factoryName'), '/ADLSSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/ADLSSink')]",
                     "type": "Microsoft.DataFactory/factories/linkedServices",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -80,12 +249,13 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+                        "[resourceId('Microsoft.Resources/deploymentScripts', 'ApplicationScript')]"
                     ]
                 },
                 // Sink for Viva Insights data output in partner tenant
                 {
-                    "name": "[concat(variables('factoryName'), '/VivaInsightsSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/VivaInsightsSink')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -114,12 +284,12 @@
                     },
                     "dependsOn": [
                         "ADLSSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Sink for AAD User data output in partner tenant 
                 {
-                    "name": "[concat(variables('factoryName'), '/AADUserSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/AADUserSink')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -148,12 +318,12 @@
                     },
                     "dependsOn": [
                         "ADLSSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define O365 source linked service (this will be using MGDC)
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365Service')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365Service')]",
                     "type": "Microsoft.DataFactory/factories/linkedServices",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -170,12 +340,12 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define the O365 source dataset to extract by MGDC
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365DataSet', variables('datasetName'))]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365DataSet', variables('datasetName'))]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -555,12 +725,12 @@
                     },
                     "dependsOn": [
                         "Office365Service",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // OPTIONAL: Define the O365 source dataset to extract AAD user directory information
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365DataSetUser_V1')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365DataSetUser_V1')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -577,12 +747,12 @@
                     },
                     "dependsOn": [
                         "Office365Service",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define a pipeline to export the events from Customer O365 tenant to Partner's Azure storage.
                 {
-                    "name": "[concat(variables('factoryName'), '/ExportO365DataEvents')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/ExportO365DataEvents')]",
                     "type": "Microsoft.DataFactory/factories/pipelines",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -786,14 +956,14 @@
                         "[concat('Office365DataSet', variables('datasetName'))]",
                         "VivaInsightsSink",
                         "AADUserSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 }
             ]
         },
         // Add a trigger that runs the pipeline once a week
         {
-            "name": "[concat(variables('factoryName'), '/ScheduledTrigger')]",
+            "name": "[concat(parameters('DataFactoryName'), '/ScheduledTrigger')]",
             "type": "Microsoft.DataFactory/factories/triggers",
             "apiVersion": "2018-06-01",
             "properties": {
@@ -820,7 +990,7 @@
                 }
             },
             "dependsOn": [
-                "[concat(resourceId('Microsoft.DataFactory/factories', variables('factoryName')), '/pipelines/ExportO365DataEvents')]"
+                "[concat(resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName')), '/pipelines/ExportO365DataEvents')]"
             ]
         }
     ]
