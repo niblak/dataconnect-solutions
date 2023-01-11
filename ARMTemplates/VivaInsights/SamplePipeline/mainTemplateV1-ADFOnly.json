@@ -20,6 +20,18 @@
             "metadata": {
                 "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
             }
+        },
+        "DataFactoryName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the Azure Data Factory instance containing your pipeline logic."
+            }
+        },
+        "DataLakeStorageEndpoint": {
+            "type": "string",
+            "metadata": {
+                "description": "The endpoint of your Data Lake storage account (this can be found under Settings -> Endpoints -> Data Lake Storage primary endpoint in your Storage Account)."
+            }
         }
     },
     // Variables can apply functions to parameters or be hardcoded values.
@@ -33,14 +45,14 @@
     "resources": [
         // Add Azure Data Factory Resource
         {
-            "name": "[variables('factoryName')]",
+            "name": "[parameters('DataFactoryName')]",
             "apiVersion": "2018-06-01",
             "type": "Microsoft.DataFactory/factories",
             "comments": "Creates the ADF pipeline that copies data from O365 to the newly created destination ADLS.",
             "dependsOn": [],
             "location": "East US 2",
             "resources": [{
-                    "name": "[concat(variables('factoryName'), '/AzureSelfHosted')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/AzureSelfHosted')]",
                     "type": "Microsoft.DataFactory/factories/integrationRuntimes",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -57,19 +69,19 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define Partner ADLS sink
                 {
-                    "name": "[concat(variables('factoryName'), '/ADLSSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/ADLSSink')]",
                     "type": "Microsoft.DataFactory/factories/linkedServices",
                     "apiVersion": "2018-06-01",
                     "properties": {
                         "annotations": [],
                         "type": "AzureBlobFS",
                         "typeProperties": {
-                            "url": "[concat('https://', variables('destinationAdlsAccountName'), '.dfs.core.windows.net/')]",
+                            "url": "[parameters('DataLakeStorageEndpoint')]",
                             "tenant": "[subscription().tenantId]",
                             "servicePrincipalId": "[parameters('AppId')]",
                             "servicePrincipalCredentialType": "ServicePrincipalKey",
@@ -80,12 +92,12 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Sink for Viva Insights data output in partner tenant
                 {
-                    "name": "[concat(variables('factoryName'), '/VivaInsightsSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/VivaInsightsSink')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -114,12 +126,12 @@
                     },
                     "dependsOn": [
                         "ADLSSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Sink for AAD User data output in partner tenant 
                 {
-                    "name": "[concat(variables('factoryName'), '/AADUserSink')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/AADUserSink')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -148,12 +160,12 @@
                     },
                     "dependsOn": [
                         "ADLSSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define O365 source linked service (this will be using MGDC)
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365Service')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365Service')]",
                     "type": "Microsoft.DataFactory/factories/linkedServices",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -170,12 +182,12 @@
                         }
                     },
                     "dependsOn": [
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define the O365 source dataset to extract by MGDC
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365DataSet', variables('datasetName'))]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365DataSet', variables('datasetName'))]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -555,12 +567,12 @@
                     },
                     "dependsOn": [
                         "Office365Service",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // OPTIONAL: Define the O365 source dataset to extract AAD user directory information
                 {
-                    "name": "[concat(variables('factoryName'), '/Office365DataSetUser_V1')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/Office365DataSetUser_V1')]",
                     "type": "Microsoft.DataFactory/factories/datasets",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -577,12 +589,12 @@
                     },
                     "dependsOn": [
                         "Office365Service",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 },
                 // Define a pipeline to export the events from Customer O365 tenant to Partner's Azure storage.
                 {
-                    "name": "[concat(variables('factoryName'), '/ExportO365DataEvents')]",
+                    "name": "[concat(parameters('DataFactoryName'), '/ExportO365DataEvents')]",
                     "type": "Microsoft.DataFactory/factories/pipelines",
                     "apiVersion": "2018-06-01",
                     "properties": {
@@ -786,14 +798,14 @@
                         "[concat('Office365DataSet', variables('datasetName'))]",
                         "VivaInsightsSink",
                         "AADUserSink",
-                        "[resourceId('Microsoft.DataFactory/factories', variables('factoryName'))]"
+                        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
                     ]
                 }
             ]
         },
         // Add a trigger that runs the pipeline once a week
         {
-            "name": "[concat(variables('factoryName'), '/ScheduledTrigger')]",
+            "name": "[concat(parameters('DataFactoryName'), '/ScheduledTrigger')]",
             "type": "Microsoft.DataFactory/factories/triggers",
             "apiVersion": "2018-06-01",
             "properties": {
@@ -820,7 +832,7 @@
                 }
             },
             "dependsOn": [
-                "[concat(resourceId('Microsoft.DataFactory/factories', variables('factoryName')), '/pipelines/ExportO365DataEvents')]"
+                "[concat(resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName')), '/pipelines/ExportO365DataEvents')]"
             ]
         }
     ]
