@@ -1090,7 +1090,6 @@
             "frequency": "Day",
             "interval": 7,
             "startTime": "2021-10-08T18:04:00Z",
-            "endTime": "2021-10-11T18:04:00Z",
             "timeZone": "UTC",
             "schedule": {}
           }
