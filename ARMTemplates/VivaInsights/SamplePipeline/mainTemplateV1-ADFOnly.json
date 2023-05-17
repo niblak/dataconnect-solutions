@@ -9,10 +9,10 @@
         "description": "The id of the Azure AD Application that has permission to run the ADF pipeline. This should be a multi tenant application."
       }
     },
-    "AppSecret": {
-      "type": "securestring",
+    "AppObjectId": {
+      "type": "string",
       "metadata": {
-        "description": "The secret for the Azure AD Application. App Secret is required for Microsoft Graph Data Connect (see documentation https://docs.microsoft.com/en-us/graph/data-connect-quickstart?tabs=Microsoft365&tutorial-step=2)."
+        "description": "Object Id of the app registration (this can be found under App registrations -> Select you app -> Click on Managed application in local directory -> Object ID)."
       }
     },
     "AzureActiveDirectoryTenantId": {
@@ -230,8 +230,12 @@
               "servicePrincipalTenantId": "[subscription().tenantId]",
               "servicePrincipalId": "[parameters('AppId')]",
               "servicePrincipalKey": {
-                "type": "SecureString",
-                "value": "[parameters('AppSecret')]"
+                "type": "AzureKeyVaultSecret",
+                "store": {
+                  "referenceName": "adlsSinkKeyVaultLink",
+                  "type": "LinkedServiceReference"
+                },
+                "secretName": "DataEgressServicePrincipalKey"
               }
             }
           },
