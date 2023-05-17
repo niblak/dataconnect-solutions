@@ -1,57 +1,50 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
-  // Parameters are values that are configurable by the partner.
+  // Parameters are values that are configurable by the customer.
   "parameters": {
     "AppId": {
       "type": "string",
       "metadata": {
-        "description": "The id of the Azure AD Application that has permission to run the ADF pipeline. This should be a multi tenant application."
+        "description": "The id of the Azure AD Application that has access to the Customer Azure Storage Account (1st hop)."
       }
     },
     "AppSecret": {
       "type": "securestring",
       "metadata": {
-        "description": "The secret for the Azure AD Application. App Secret is required for Microsoft Graph Data Connect (see documentation https://docs.microsoft.com/en-us/graph/data-connect-quickstart?tabs=Microsoft365&tutorial-step=2)."
+        "description": "The secret for the Azure AD Application that has access to the Customer Azure Storage Account (1st hop). App Secret is required for Microsoft Graph Data Connect (see documentation https://docs.microsoft.com/en-us/graph/data-connect-quickstart?tabs=Microsoft365&tutorial-step=2)."
       }
     },
-    "AzureActiveDirectoryTenantId": {
+    "DataSet": {
       "type": "string",
+      "allowedValues": [
+        "BasicDataSet_v0.Event_v1",
+        "BasicDataSet_v0.MailboxSettings_v0"
+      ],
       "metadata": {
-        "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
+        "description": "The name of the dataset to export using MGDC."
       }
     },
-    "DataFactoryName": {
+    "SASUrl": {
       "type": "string",
       "metadata": {
-        "description": "The name of the Azure Data Factory instance containing your pipeline logic."
-      }
-    },
-    "ADLSSinkKeyVaultName": {
-      "type": "string",
-      "metadata": {
-        "description": "The name of the Azure Key Vault to be used for authenticating the ADLS Sink."
-      }
-    },
-    "ADLSSinkSecretName": {
-      "type": "string",
-      "metadata": {
-        "description": "The name of the secret in the Azure Key Vault to be used for authenticating the ADLS Sink."
+        "description": "Shared Access Signature Url of the Partner destination storage account to store the content to, including the token (2nd hop)."
       }
     }
   },
   // Variables can apply functions to parameters or be hardcoded values.
   "variables": {
-    // Name given to the storage account created in the Partner subscription.
+    // Name to give the Azure Data Factory pipeline created by the ARM template
+    "dataFactoryName": "[concat('M365-', uniqueString(resourceGroup().id))]",
+    // Name given to the storage account created in the Customer subscription (1st hop)
     "destinationAdlsAccountName": "[concat('astore', uniqueString(resourceGroup().id))]",
-    // Name given to the key vault created in the Partner subscription.
-    "keyVaultName": "[concat('keyvault', uniqueString(resourceGroup().id))]",
-    "datasetName": "VivaInsightsDataset_PersonReport_v1",
-    "dataFactoryAppResourceId": "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
-    "adlsSinkKeyVaultLink": "adlsSinkKeyVaultLink"
+    // Name of the container in partner destination store to copy data to. It is required for the Azure Data Factory Blob Storage Linked Service. We extract it from the SAS URL. (2nd hop)
+    "destinationContainer": "[split(split(parameters('SASUrl'), '/')[3], '?')[0]]",
+    // The name of the final JSON file in partner destination store to copy data to (2nd hop)
+    "destinationFileName": "[concat(split(parameters('SASUrl'), '?')[0], '/', concat(uniqueString(resourceGroup().id), '.json?'), split(parameters('SASUrl'), '?')[1])]"
   },
   "resources": [
-    // Script to get the service principal from an app registration in the Partner subscription.
+    // Script to get the service principal from an app registration in the Customer subscription. Written by MGDC team.
     {
       "apiVersion": "2020-10-01",
       "kind": "AzurePowerShell",
@@ -59,7 +52,7 @@
       "name": "ApplicationScript",
       "properties": {
         "forceUpdateTag": "1",
-        "azPowerShellVersion": "8.0",
+        "azPowerShellVersion": "3.0",
         "environmentVariables": [
           {
             "name": "AppSecret",
@@ -67,7 +60,7 @@
           }
         ],
         "arguments": "[format(' -AppID {0} -TenantId {1} -AppToGet {2}', parameters('AppId'), subscription().tenantId, parameters('AppId'))]",
-        "primaryScriptUri": "https://raw.githubusercontent.com/niblak/dataconnect-solutions/vivaarmtemplates/ARMTemplates/SupportScripts/GetServicePricipalId.ps1",
+        "primaryScriptUri": "https://raw.githubusercontent.com/NikCharlebois/dataconnect-solutions/main/ARMTemplates/SupportScripts/GetServicePricipalId.ps1",
         "timeout": "PT30M",
         "cleanupPreference": "OnSuccess",
         "retentionInterval": "P1D",
@@ -75,7 +68,7 @@
       },
       "type": "Microsoft.Resources/deploymentScripts"
     },
-    // Storage account in Partner subscription
+    // Storage account in Customer subscription (1st hop)
     {
       "type": "Microsoft.Storage/storageAccounts",
       "apiVersion": "2021-01-01",
@@ -88,7 +81,7 @@
       "kind": "StorageV2",
       "properties": {
         "minimumTlsVersion": "TLS1_2",
-        "allowBlobPublicAccess": false,
+        "allowBlobPublicAccess": true,
         "allowSharedKeyAccess": true,
         "isHnsEnabled": false,
         "networkAcls": {
@@ -114,7 +107,7 @@
         "accessTier": "Hot"
       }
     },
-    // Create a blob service resource (needed for blob operations) in the Partner storage account
+    // Create a blob service resource (needed for blob operations) in the Customer storage account (1st hop)
     {
       "type": "Microsoft.Storage/storageAccounts/blobServices",
       "apiVersion": "2021-01-01",
@@ -135,7 +128,7 @@
         }
       }
     },
-    // Create a container in the Partner storage account
+    // Create a container in the Customer storage account (1st hop)
     {
       "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
       "apiVersion": "2021-01-01",
@@ -147,10 +140,10 @@
       "properties": {
         "defaultEncryptionScope": "$account-encryption-key",
         "denyEncryptionScopeOverride": false,
-        "publicAccess": "None"
+        "publicAccess": "Container"
       }
     },
-    // Add Contributor role assignment to the Partner storage account container
+    // Add Contributor role assignment to the Customer storage account container (1st hop)
     {
       "type": "Microsoft.Storage/storageAccounts/providers/roleAssignments",
       "apiVersion": "2018-07-01",
@@ -163,7 +156,7 @@
         "principalId": "[reference('ApplicationScript').outputs.PrincipalId]"
       }
     },
-    // Add Storage Blob Data Contributor role assignment to the Partner storage account container
+    // Add Storage Blob Data Contributor role assignment to the Customer storage account container (1st hop)
     {
       "type": "Microsoft.Storage/storageAccounts/blobServices/containers/providers/roleAssignments",
       "apiVersion": "2018-07-01",
@@ -176,72 +169,19 @@
         "principalId": "[reference('ApplicationScript').outputs.PrincipalId]"
       }
     },
-    // Add Key Vault in the Partner subscription.
-    {
-      "type": "Microsoft.KeyVault/vaults",
-      "apiVersion": "2022-07-01",
-      "name": "[variables('keyVaultName')]",
-      "location": "eastus2",
-      "properties": {
-        "sku": {
-          "family": "A",
-          "name": "Standard"
-        },
-        "tenantId": "[subscription().tenantId]",
-        "accessPolicies": [],
-        "enabledForDeployment": false,
-        "enabledForDiskEncryption": false,
-        "enabledForTemplateDeployment": false,
-        "enableSoftDelete": true,
-        "softDeleteRetentionInDays": 90,
-        "enableRbacAuthorization": true,
-        "vaultUri": "[concat('https://', variables('keyVaultName'), '.vault.azure.net/')]",
-        "provisioningState": "Succeeded",
-        "publicNetworkAccess": "Enabled"
-      }
-    },
-    // Add Key Vault Crypto User role assignment to the Partner Key Vault.
-    {
-      "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "name": "[concat(variables('keyVaultName'),'/Microsoft.Authorization/',guid(concat('keyvault', resourceGroup().id)))]",
-      "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
-      ],
-      "properties": {
-        "principalId": "[reference('ApplicationScript').outputs.PrincipalId]",
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '12338af0-0e69-4776-bea7-57ae8d297424')]"
-      }
-    },
-    // Add Key Vault Secrets User role assignment to the Partner Key Vault.
-    {
-      "name": "[concat(parameters('ADLSSinkKeyVaultName'),'/Microsoft.Authorization/',guid(concat(parameters('ADLSSinkKeyVaultName'), parameters('DataFactoryName'), resourceGroup().id)))]",
-      "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "properties": {
-        "principalId": "[reference(variables('dataFactoryAppResourceId'), '2018-06-01', 'Full').identity.principalId]",
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '4633458b-17de-408a-b874-0445c86b69e6')]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
-      ]
-    },
     // Add Azure Data Factory Resource
     {
+      "name": "[variables('dataFactoryName')]",
       "apiVersion": "2018-06-01",
+      "type": "Microsoft.DataFactory/factories",
       "comments": "Creates the ADF pipeline that copies data from O365 to the newly created destination ADLS.",
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/', variables('destinationAdlsAccountName'))]"
       ],
-      "identity": {
-        "type": "SystemAssigned"
-      },
       "location": "East US 2",
-      "name": "[parameters('DataFactoryName')]",
       "resources": [
         {
-          "name": "[concat(parameters('DataFactoryName'), '/AzureSelfHosted')]",
+          "name": "[concat(variables('dataFactoryName'), '/AzureSelfHosted')]",
           "type": "Microsoft.DataFactory/factories/integrationRuntimes",
           "apiVersion": "2018-06-01",
           "properties": {
@@ -258,12 +198,12 @@
             }
           },
           "dependsOn": [
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
           ]
         },
-        // Define Partner ADLS sink
+        // Define Customer ADLS sink (1st hop)
         {
-          "name": "[concat(parameters('DataFactoryName'), '/ADLSSink')]",
+          "name": "[concat(variables('dataFactoryName'), '/ADLSSink')]",
           "type": "Microsoft.DataFactory/factories/linkedServices",
           "apiVersion": "2018-06-01",
           "properties": {
@@ -275,41 +215,19 @@
               "servicePrincipalId": "[parameters('AppId')]",
               "servicePrincipalCredentialType": "ServicePrincipalKey",
               "servicePrincipalCredential": {
-                "type": "AzureKeyVaultSecret",
-                "secretName": "[parameters('ADLSSinkSecretName')]",
-                "secretVersion": "",
-                "store": {
-                  "referenceName": "[variables('adlsSinkKeyVaultLink')]",
-                  "type": "LinkedServiceReference"
-                }
+                "type": "SecureString",
+                "value": "[parameters('AppSecret')]"
               }
             }
           },
           "dependsOn": [
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
-            "[resourceId('Microsoft.Resources/deploymentScripts', 'ApplicationScript')]",
-            "[variables('adlsSinkKeyVaultLink')]"
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]",
+            "[resourceId('Microsoft.Resources/deploymentScripts', 'ApplicationScript')]"
           ]
         },
-        // Define KV Link For Service Principal Secret
+        // Define Customer sink dataset
         {
-          "name": "[concat(parameters('DataFactoryName'), '/', variables('adlsSinkKeyVaultLink'))]",
-          "type": "Microsoft.DataFactory/factories/linkedServices",
-          "apiVersion": "2018-06-01",
-          "properties": {
-            "annotations": [],
-            "type": "AzureKeyVault",
-            "typeProperties": {
-              "baseUrl": "[concat('https://', parameters('ADLSSinkKeyVaultName'), '.vault.azure.net/')]"
-            }
-          },
-          "dependsOn": [
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
-          ]
-        },
-        // Sink for Viva Insights data output in partner tenant
-        {
-          "name": "[concat(parameters('DataFactoryName'), '/VivaInsightsSink')]",
+          "name": "[concat(variables('dataFactoryName'), '/BinarySink')]",
           "type": "Microsoft.DataFactory/factories/datasets",
           "apiVersion": "2018-06-01",
           "properties": {
@@ -317,74 +235,30 @@
               "referenceName": "ADLSSink",
               "type": "LinkedServiceReference"
             },
-            "parameters": {
-              "AzureActiveDirectoryTenantId": {
-                "type": "string",
-                "defaultValue": "[parameters('AzureActiveDirectoryTenantId')]"
-              }
-            },
             "annotations": [],
             "type": "Binary",
             "typeProperties": {
               "location": {
                 "type": "AzureBlobFSLocation",
-                "folderPath": {
-                  "value": "@concat(pipeline().RunId, '/VivaInsights/', dataset().AzureActiveDirectoryTenantId)",
-                  "type": "Expression"
-                },
                 "fileSystem": "datasets"
               }
             }
           },
           "dependsOn": [
             "ADLSSink",
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
           ]
         },
-        // Sink for AAD User data output in partner tenant
+        // Define O365 source linked service (1st hop - this will be using MGDC)
         {
-          "name": "[concat(parameters('DataFactoryName'), '/AADUserSink')]",
-          "type": "Microsoft.DataFactory/factories/datasets",
-          "apiVersion": "2018-06-01",
-          "properties": {
-            "linkedServiceName": {
-              "referenceName": "ADLSSink",
-              "type": "LinkedServiceReference"
-            },
-            "parameters": {
-              "AzureActiveDirectoryTenantId": {
-                "type": "string",
-                "defaultValue": "[parameters('AzureActiveDirectoryTenantId')]"
-              }
-            },
-            "annotations": [],
-            "type": "Binary",
-            "typeProperties": {
-              "location": {
-                "type": "AzureBlobFSLocation",
-                "folderPath": {
-                  "value": "@concat(pipeline().RunId, '/AADUser/', dataset().AzureActiveDirectoryTenantId)",
-                  "type": "Expression"
-                },
-                "fileSystem": "datasets"
-              }
-            }
-          },
-          "dependsOn": [
-            "ADLSSink",
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
-          ]
-        },
-        // Define O365 source linked service (this will be using MGDC)
-        {
-          "name": "[concat(parameters('DataFactoryName'), '/Office365Service')]",
+          "name": "[concat(variables('dataFactoryName'), '/Office365Service')]",
           "type": "Microsoft.DataFactory/factories/linkedServices",
           "apiVersion": "2018-06-01",
           "properties": {
             "annotations": [],
             "type": "Office365",
             "typeProperties": {
-              "office365TenantId": "[parameters('AzureActiveDirectoryTenantId')]",
+              "office365TenantId": "[subscription().tenantId]",
               "servicePrincipalTenantId": "[subscription().tenantId]",
               "servicePrincipalId": "[parameters('AppId')]",
               "servicePrincipalKey": {
@@ -394,397 +268,12 @@
             }
           },
           "dependsOn": [
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
           ]
         },
-        // Define the O365 source dataset to extract by MGDC
+        // Define the O365 source dataset to extract by MGDC (1st hop)
         {
-          "name": "[concat(parameters('DataFactoryName'), '/Office365DataSet', variables('datasetName'))]",
-          "type": "Microsoft.DataFactory/factories/datasets",
-          "apiVersion": "2018-06-01",
-          "properties": {
-            "linkedServiceName": {
-              "referenceName": "Office365Service",
-              "type": "LinkedServiceReference"
-            },
-            "annotations": [],
-            "parameters": {
-              "RequestStartDate": {
-                "type": "string"
-              },
-              "RequestEndDate": {
-                "type": "string"
-              },
-              "AggregationType": {
-                "type": "string"
-              }
-            },
-            "type": "Office365Table",
-            "structure": [
-              {
-                "name": "After-hours collaboration hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "After-hours email hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "After-hours chat hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "After-hours meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "After-hours scheduled call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "After-hours unscheduled call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Collaboration hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Email hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "External collaboration hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Chat hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Scheduled call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Unscheduled call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Conflicting meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meetings with manager 1:1",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "IsActive",
-                "type": "boolean",
-                "description": " "
-              },
-              {
-                "name": "MetricDate",
-                "type": "datetime",
-                "description": "The date and time the message was created."
-              },
-              {
-                "name": "After-hours call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Multitasking hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Emails sent",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meetings",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Chats sent",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Calls",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meeting and call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Weekend emails sent",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Weekend chats sent",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Weekend meetings",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Unscheduled weekend calls",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Urgent email hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Urgent meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small-group meeting call and chat hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small-group emails sent excluding manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small-group chats sent excluding manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Internal meeting hours with 3 to 8 attendees",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Internal meeting hours without manager 1:1",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Unscheduled call hours with manager 1:1",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Unscheduled call hours with manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Collaboration hours with direct reports",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small-group emails sent including manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small-group chats sent including manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Manager coaching hours 1:1",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meeting hours with manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meeting hours with manager 1:1",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meetings with manager",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meetings with skip level",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Meeting hours with skip level",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Internal network size",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "External unscheduled call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "External email hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "External chat hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "External meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Available-to-focus hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Uninterrupted hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Interrupted hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small and short meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small and short recurring meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Large and long meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Large and long recurring meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Large and short meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Large and short recurring meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small and long meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Small and long recurring meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Recurring meeting hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Working-hours collaboration hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Working-hours email hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Working-hours call hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Working-hours chat hours",
-                "type": "double",
-                "description": " "
-              },
-              {
-                "name": "Working-hours meeting hours",
-                "type": "double",
-                "description": " "
-              }
-            ],
-            "typeProperties": {
-              "tableName": "[variables('datasetName')]",
-              "dateFilterColumn": "MetricDate",
-              "startTime": "@dataset().RequestStartDate",
-              "endTime": "@dataset().RequestEndDate",
-              "AdditionalDataSetProperties": {
-                "aggregationType": "@dataset().AggregationType"
-              }
-            }
-          },
-          "dependsOn": [
-            "Office365Service",
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
-          ]
-        },
-        // OPTIONAL: Define the O365 source dataset to extract AAD user directory information
-        {
-          "name": "[concat(parameters('DataFactoryName'), '/Office365DataSetUser_V1')]",
+          "name": "[concat(variables('dataFactoryName'), '/Office365DataSet', split(parameters('Dataset'), '.')[1])]",
           "type": "Microsoft.DataFactory/factories/datasets",
           "apiVersion": "2018-06-01",
           "properties": {
@@ -796,71 +285,63 @@
             "type": "Office365Table",
             "schema": [],
             "typeProperties": {
-              "tableName": "BasicDataSet_v0.User_v1"
+              "tableName": "[parameters('Dataset')]"
             }
           },
           "dependsOn": [
             "Office365Service",
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
           ]
         },
-        // Define a pipeline to export the events from Customer O365 tenant to Partner's Azure storage.
+        // Define the Partner destination blob storage linked service (2nd hop)
         {
-          "name": "[concat(parameters('DataFactoryName'), '/ExportO365DataEvents')]",
+          "name": "[concat(variables('dataFactoryName'), '/DestinationBlobStorage')]",
+          "type": "Microsoft.DataFactory/factories/linkedServices",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "annotations": [],
+            "type": "AzureBlobStorage",
+            "typeProperties": {
+              "sasUri": "[variables('destinationFileName')]"
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]" 
+          ]
+        },
+        // Define the Partner destination container dataset (2nd hop)
+        {
+          "name": "[concat(variables('dataFactoryName'), '/DestinationBinary')]",
+          "type": "Microsoft.DataFactory/factories/datasets",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "linkedServiceName": {
+              "referenceName": "DestinationBlobStorage",
+              "type": "LinkedServiceReference"
+            },
+            "annotations": [],
+            "type": "Binary",
+            "typeProperties": {
+              "location": {
+                "type": "AzureBlobStorageLocation",
+                "container": "[variables('destinationContainer')]"
+              }
+            }
+          },
+          "dependsOn": [
+            "DestinationBlobStorage",
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
+          ]
+        },
+        // Define a pipeline to export the events from O365 to Customer using MGDC (1st hop), then Customer to Partner (2nd hop)
+        {
+          "name": "[concat(variables('dataFactoryName'), '/ExportO365DataEvents')]",
           "type": "Microsoft.DataFactory/factories/pipelines",
           "apiVersion": "2018-06-01",
           "properties": {
             "activities": [
               {
-                "name": "Copy Viva Insights Data",
-                "type": "Copy",
-                "dependsOn": [
-
-                ],
-                "policy": {
-                  "timeout": "7.00:00:00",
-                  "retry": 0,
-                  "retryIntervalInSeconds": 30,
-                  "secureOutput": false,
-                  "secureInput": false
-                },
-                "userProperties": [
-
-                ],
-                "typeProperties": {
-                  "source": {
-                    "type": "Office365Source"
-                  },
-                  "sink": {
-                    "type": "BinarySink",
-                    "storeSettings": {
-                      "type": "AzureBlobFSWriteSettings"
-                    }
-                  },
-                  "enableStaging": false
-                },
-                "inputs": [
-                  {
-                    "referenceName": "[concat('Office365DataSet', variables('datasetName'))]",
-                    "type": "DatasetReference",
-                    "parameters": {
-                      "RequestStartDate": "@if(empty(pipeline().parameters.RequestStartDate), subtractFromTime(pipeline().TriggerTime, pipeline().parameters.DefaultLookbackWindowDays, 'Day'), pipeline().parameters.RequestStartDate)",
-                      "RequestEndDate": "@if(empty(pipeline().parameters.RequestEndDate), pipeline().TriggerTime, pipeline().parameters.RequestEndDate)",
-                      "AggregationType": "@pipeline().parameters.AggregationType"
-                    }
-                  }
-                ],
-                "outputs": [
-                  {
-                    "referenceName": "VivaInsightsSink",
-                    "type": "DatasetReference",
-                    "parameters": {}
-                  }
-                ]
-              },
-              // OPTIONAL: Step to export AAD user information in the customer tenant, if this is required for your application to join with the output.
-              {
-                "name": "Copy AAD User Data",
+                "name": "Copy Office 365 Data",
                 "type": "Copy",
                 "dependsOn": [],
                 "policy": {
@@ -874,144 +355,131 @@
                 "typeProperties": {
                   "source": {
                     "type": "Office365Source",
+                    "dateFilterColumn": "createdDateTime",
+                    "startTime": "2010-07-01T00:00:00.000Z",
+                    "endTime": "2035-04-21T00:00:00.000Z",
+                    "userScopeFilterUri": "",
+                    // Define the output columns selected
                     "outputColumns": [
                       {
-                        "name": "aboutMe"
+                        "name": "id"
                       },
                       {
-                        "name": "accountEnabled"
-                      },
-                      {
-                        "name": "ageGroup"
-                      },
-                      {
-                        "name": "assignedLicenses"
-                      },
-                      {
-                        "name": "assignedPlans"
-                      },
-                      {
-                        "name": "birthday"
-                      },
-                      {
-                        "name": "businessPhones"
-                      },
-                      {
-                        "name": "city"
-                      },
-                      {
-                        "name": "companyName"
-                      },
-                      {
-                        "name": "consentProvidedForMinor"
-                      },
-                      {
-                        "name": "country"
+                        "name": "allowNewTimeProposals"
                       },
                       {
                         "name": "createdDateTime"
                       },
                       {
-                        "name": "department"
+                        "name": "lastModifiedDateTime"
                       },
                       {
-                        "name": "displayName"
+                        "name": "changeKey"
                       },
                       {
-                        "name": "givenName"
+                        "name": "categories"
                       },
                       {
-                        "name": "hireDate"
+                        "name": "originalStartTimeZone"
                       },
                       {
-                        "name": "id"
+                        "name": "originalEndTimeZone"
                       },
                       {
-                        "name": "imAddresses"
+                        "name": "responseStatus"
                       },
                       {
-                        "name": "interests"
+                        "name": "iCalUId"
                       },
                       {
-                        "name": "jobTitle"
+                        "name": "reminderMinutesBeforeStart"
                       },
                       {
-                        "name": "legalAgeGroupClassification"
+                        "name": "isOnlineMeeting"
                       },
                       {
-                        "name": "mail"
+                        "name": "isReminderOn"
                       },
                       {
-                        "name": "mailNickname"
+                        "name": "hasAttachments"
                       },
                       {
-                        "name": "mobilePhone"
+                        "name": "subject"
                       },
                       {
-                        "name": "mySite"
+                        "name": "body"
                       },
                       {
-                        "name": "officeLocation"
+                        "name": "importance"
                       },
                       {
-                        "name": "onPremisesImmutableId"
+                        "name": "sensitivity"
                       },
                       {
-                        "name": "onPremisesLastSyncDateTime"
+                        "name": "start"
                       },
                       {
-                        "name": "onPremisesSecurityIdentifier"
+                        "name": "end"
                       },
                       {
-                        "name": "onPremisesSyncEnabled"
+                        "name": "location"
                       },
                       {
-                        "name": "passwordPolicies"
+                        "name": "isAllDay"
                       },
                       {
-                        "name": "pastProjects"
+                        "name": "isCancelled"
                       },
                       {
-                        "name": "postalCode"
+                        "name": "isOrganizer"
                       },
                       {
-                        "name": "preferredLanguage"
+                        "name": "onlineMeeting"
                       },
                       {
-                        "name": "preferredName"
+                        "name": "onlineMeetingProvider"
                       },
                       {
-                        "name": "provisionedPlans"
+                        "name": "recurrence"
                       },
                       {
-                        "name": "proxyAddresses"
+                        "name": "responseRequested"
                       },
                       {
-                        "name": "responsibilities"
+                        "name": "showAs"
                       },
                       {
-                        "name": "schools"
+                        "name": "transactionId"
                       },
                       {
-                        "name": "skills"
+                        "name": "type"
                       },
                       {
-                        "name": "state"
+                        "name": "attendees"
                       },
                       {
-                        "name": "streetAddress"
+                        "name": "organizer"
                       },
                       {
-                        "name": "surname"
+                        "name": "webLink"
                       },
                       {
-                        "name": "usageLocation"
+                        "name": "attachments"
                       },
                       {
-                        "name": "userPrincipalName"
+                        "name": "bodyPreview"
                       },
                       {
-                        "name": "userType"
+                        "name": "locations"
+                      },
+                      {
+                        "name": "onlineMeetingUrl"
+                      },
+                      {
+                        "name": "originalStart"
+                      },
+                      {
+                        "name": "seriesMasterId"
                       }
                     ]
                   },
@@ -1025,55 +493,90 @@
                 },
                 "inputs": [
                   {
-                    "referenceName": "Office365DataSetUser_V1",
+                    "referenceName": "[concat('Office365DataSet',split(parameters('Dataset'), '.')[1])]",
                     "type": "DatasetReference",
                     "parameters": {}
                   }
                 ],
                 "outputs": [
                   {
-                    "referenceName": "AADUserSink",
+                    "referenceName": "BinarySink",
+                    "type": "DatasetReference",
+                    "parameters": {}
+                  }
+                ]
+              },
+              {
+                "name": "Export data to external tenant",
+                "type": "Copy",
+                "dependsOn": [
+                  {
+                    "activity": "Copy Office 365 Data",
+                    "dependencyConditions": [
+                      "Succeeded"
+                    ]
+                  }
+                ],
+                "policy": {
+                  "timeout": "7.00:00:00",
+                  "retry": 0,
+                  "retryIntervalInSeconds": 30,
+                  "secureOutput": false,
+                  "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                  "source": {
+                    "type": "BinarySource",
+                    "storeSettings": {
+                      "type": "AzureBlobFSReadSettings",
+                      "recursive": true
+                    },
+                    "formatSettings": {
+                      "type": "BinaryReadSettings"
+                    }
+                  },
+                  "sink": {
+                    "type": "BinarySink",
+                    "storeSettings": {
+                      "type": "AzureBlobStorageWriteSettings"
+                    }
+                  },
+                  "enableStaging": false
+                },
+                "inputs": [
+                  {
+                    "referenceName": "BinarySink",
+                    "type": "DatasetReference",
+                    "parameters": {}
+                  }
+                ],
+                "outputs": [
+                  {
+                    "referenceName": "DestinationBinary",
                     "type": "DatasetReference",
                     "parameters": {}
                   }
                 ]
               }
             ],
-            "parameters": {
-              "RequestStartDate": {
-                "type": "string"
-              },
-              "RequestEndDate": {
-                "type": "string"
-              },
-              "DefaultLookbackWindowDays": {
-                "type": "int",
-                "defaultValue": 14
-              },
-              "AggregationType": {
-                "type": "string",
-                "defaultValue": "Week"
-              }
-            },
             "annotations": []
           },
           "dependsOn": [
-            "[concat('Office365DataSet', variables('datasetName'))]",
-            "VivaInsightsSink",
-            "AADUserSink",
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[concat('Office365DataSet',split(parameters('Dataset'), '.')[1])]",
+            "BinarySink",
+            "[resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName'))]"
           ]
         }
-      ],
-      "type": "Microsoft.DataFactory/factories"
+      ]
     },
-    // Add a trigger that runs the pipeline once a week
+    // Add a trigger that runs the pipeline once a day
     {
-      "name": "[concat(parameters('DataFactoryName'), '/ScheduledTrigger')]",
+      "name": "[concat(variables('dataFactoryName'), '/ScheduledTrigger')]",
       "type": "Microsoft.DataFactory/factories/triggers",
       "apiVersion": "2018-06-01",
       "properties": {
-        "description": "Runs the pipeline once a week.",
+        "description": "Runs the pipeline once a day.",
         "annotations": [],
         "pipelines": [
           {
@@ -1088,15 +591,16 @@
         "typeProperties": {
           "recurrence": {
             "frequency": "Day",
-            "interval": 7,
+            "interval": 1,
             "startTime": "2021-10-08T18:04:00Z",
+            "endTime": "2021-10-11T18:04:00Z",
             "timeZone": "UTC",
             "schedule": {}
           }
         }
       },
       "dependsOn": [
-        "[concat(resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName')), '/pipelines/ExportO365DataEvents')]"
+        "[concat(resourceId('Microsoft.DataFactory/factories', variables('dataFactoryName')), '/pipelines/ExportO365DataEvents')]"
       ]
     }
   ]
