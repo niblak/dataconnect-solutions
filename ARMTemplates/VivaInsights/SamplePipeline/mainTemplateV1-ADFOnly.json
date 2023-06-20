@@ -235,12 +235,13 @@
                   "referenceName": "adlsSinkKeyVaultLink",
                   "type": "LinkedServiceReference"
                 },
-                "secretName": "DataEgressServicePrincipalKey"
+                "secretName": "[parameters('ADLSSinkSecretName')]"
               }
             }
           },
           "dependsOn": [
-            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+            "[variables('adlsSinkKeyVaultLink')]"
           ]
         },
         // Define the O365 source dataset to extract by MGDC
