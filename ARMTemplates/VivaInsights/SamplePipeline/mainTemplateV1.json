@@ -27,6 +27,12 @@
         "description": "The name of the Azure Data Factory instance containing your pipeline logic."
       }
     },
+    "DataLakeStorageEndpoint": {
+      "type": "string",
+      "metadata": {
+        "description": "The endpoint of your Data Lake storage account (this can be found under Settings -> Endpoints -> Data Lake Storage primary endpoint in your Storage Account)."
+      }
+    },
     "ADLSSinkKeyVaultName": {
       "type": "string",
       "metadata": {
@@ -42,153 +48,15 @@
   },
   // Variables can apply functions to parameters or be hardcoded values.
   "variables": {
+    // Name to give the Azure Data Factory pipeline created by the ARM template.
+    "factoryName": "[concat('M365-', uniqueString(resourceGroup().id))]",
     // Name given to the storage account created in the Partner subscription.
     "destinationAdlsAccountName": "[concat('astore', uniqueString(resourceGroup().id))]",
-    // Name given to the key vault created in the Partner subscription.
-    "keyVaultName": "[concat('keyvault', uniqueString(resourceGroup().id))]",
     "datasetName": "VivaInsightsDataset_PersonReport_v1",
     "dataFactoryAppResourceId": "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
     "adlsSinkKeyVaultLink": "adlsSinkKeyVaultLink"
   },
   "resources": [
-    // Storage account in Partner subscription
-    {
-      "type": "Microsoft.Storage/storageAccounts",
-      "apiVersion": "2021-01-01",
-      "name": "[variables('destinationAdlsAccountName')]",
-      "location": "eastus2",
-      "sku": {
-        "name": "Standard_RAGRS",
-        "tier": "Standard"
-      },
-      "kind": "StorageV2",
-      "properties": {
-        "minimumTlsVersion": "TLS1_2",
-        "allowBlobPublicAccess": false,
-        "allowSharedKeyAccess": true,
-        "isHnsEnabled": false,
-        "networkAcls": {
-          "bypass": "AzureServices",
-          "virtualNetworkRules": [],
-          "ipRules": [],
-          "defaultAction": "Allow"
-        },
-        "supportsHttpsTrafficOnly": true,
-        "encryption": {
-          "services": {
-            "file": {
-              "keyType": "Account",
-              "enabled": true
-            },
-            "blob": {
-              "keyType": "Account",
-              "enabled": true
-            }
-          },
-          "keySource": "Microsoft.Storage"
-        },
-        "accessTier": "Hot"
-      }
-    },
-    // Create a blob service resource (needed for blob operations) in the Partner storage account
-    {
-      "type": "Microsoft.Storage/storageAccounts/blobServices",
-      "apiVersion": "2021-01-01",
-      "name": "[concat(variables('destinationAdlsAccountName'), '/default')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('destinationAdlsAccountName'))]"
-      ],
-      "sku": {
-        "name": "Standard_RAGRS",
-        "tier": "Standard"
-      },
-      "properties": {
-        "cors": {
-          "corsRules": []
-        },
-        "deleteRetentionPolicy": {
-          "enabled": false
-        }
-      }
-    },
-    // Create a container in the Partner storage account
-    {
-      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
-      "apiVersion": "2021-01-01",
-      "name": "[concat(variables('destinationAdlsAccountName'), '/default/datasets')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('destinationAdlsAccountName'), 'default')]",
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('destinationAdlsAccountName'))]"
-      ],
-      "properties": {
-        "defaultEncryptionScope": "$account-encryption-key",
-        "denyEncryptionScopeOverride": false,
-        "publicAccess": "None"
-      }
-    },
-    // Add Contributor role assignment to the Partner storage account container
-    {
-      "type": "Microsoft.Storage/storageAccounts/providers/roleAssignments",
-      "apiVersion": "2018-07-01",
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('destinationAdlsAccountName'), 'default', 'datasets')]"
-      ],
-      "name": "[concat(variables('destinationAdlsAccountName'),'/Microsoft.Authorization/',guid(resourceGroup().id))]",
-      "properties": {
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
-        "principalId": "[parameters('AppObjectId')]"
-      }
-    },
-    // Add Storage Blob Data Contributor role assignment to the Partner storage account container
-    {
-      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/providers/roleAssignments",
-      "apiVersion": "2018-07-01",
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('destinationAdlsAccountName'), 'default', 'datasets')]"
-      ],
-      "name": "[concat(variables('destinationAdlsAccountName'), '/default/datasets/Microsoft.Authorization/', guid(concat('blobdatacontributor', resourceGroup().id)))]",
-      "properties": {
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-        "principalId": "[parameters('AppObjectId')]"
-      }
-    },
-    // Add Key Vault in the Partner subscription.
-    {
-      "type": "Microsoft.KeyVault/vaults",
-      "apiVersion": "2022-07-01",
-      "name": "[variables('keyVaultName')]",
-      "location": "eastus2",
-      "properties": {
-        "sku": {
-          "family": "A",
-          "name": "Standard"
-        },
-        "tenantId": "[subscription().tenantId]",
-        "accessPolicies": [],
-        "enabledForDeployment": false,
-        "enabledForDiskEncryption": false,
-        "enabledForTemplateDeployment": false,
-        "enableSoftDelete": true,
-        "softDeleteRetentionInDays": 90,
-        "enableRbacAuthorization": true,
-        "vaultUri": "[concat('https://', variables('keyVaultName'), '.vault.azure.net/')]",
-        "provisioningState": "Succeeded",
-        "publicNetworkAccess": "Enabled"
-      }
-    },
-    // Add Key Vault Crypto User role assignment to the Partner Key Vault.
-    {
-      "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "name": "[concat(variables('keyVaultName'),'/Microsoft.Authorization/',guid(concat('keyvault', resourceGroup().id)))]",
-      "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
-      ],
-      "properties": {
-        "principalId": "[parameters('AppObjectId')]",
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '12338af0-0e69-4776-bea7-57ae8d297424')]"
-      }
-    },
     // Add Key Vault Secrets User role assignment to the Partner Key Vault.
     {
       "name": "[concat(parameters('ADLSSinkKeyVaultName'),'/Microsoft.Authorization/',guid(concat(parameters('ADLSSinkKeyVaultName'), parameters('DataFactoryName'), resourceGroup().id)))]",
@@ -205,16 +73,15 @@
     },
     // Add Azure Data Factory Resource
     {
+      "name": "[parameters('DataFactoryName')]",
       "apiVersion": "2018-06-01",
+      "type": "Microsoft.DataFactory/factories",
       "comments": "Creates the ADF pipeline that copies data from O365 to the newly created destination ADLS.",
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts/', variables('destinationAdlsAccountName'))]"
-      ],
+      "dependsOn": [],
       "identity": {
         "type": "SystemAssigned"
       },
       "location": "East US 2",
-      "name": "[parameters('DataFactoryName')]",
       "resources": [
         {
           "name": "[concat(parameters('DataFactoryName'), '/AzureSelfHosted')]",
@@ -246,7 +113,7 @@
             "annotations": [],
             "type": "AzureBlobFS",
             "typeProperties": {
-              "url": "[concat('https://', variables('destinationAdlsAccountName'), '.dfs.core.windows.net/')]",
+              "url": "[parameters('DataLakeStorageEndpoint')]",
               "tenant": "[subscription().tenantId]",
               "servicePrincipalId": "[parameters('AppId')]",
               "servicePrincipalCredentialType": "ServicePrincipalKey",
@@ -316,7 +183,7 @@
             "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
           ]
         },
-        // Sink for AAD User data output in partner tenant
+        // Sink for AAD User data output in partner tenant 
         {
           "name": "[concat(parameters('DataFactoryName'), '/AADUserSink')]",
           "type": "Microsoft.DataFactory/factories/datasets",
@@ -368,7 +235,7 @@
                   "referenceName": "adlsSinkKeyVaultLink",
                   "type": "LinkedServiceReference"
                 },
-                "secretName": "DataEgressServicePrincipalKey"
+                "secretName": "[parameters('ADLSSinkSecretName')]"
               }
             }
           },
@@ -1044,8 +911,7 @@
             "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
           ]
         }
-      ],
-      "type": "Microsoft.DataFactory/factories"
+      ]
     },
     // Add a trigger that runs the pipeline once a week
     {
