@@ -232,7 +232,7 @@
               "servicePrincipalKey": {
                 "type": "AzureKeyVaultSecret",
                 "store": {
-                  "referenceName": "adlsSinkKeyVaultLink",
+                  "referenceName": "[variables('adlsSinkKeyVaultLink')]",
                   "type": "LinkedServiceReference"
                 },
                 "secretName": "[parameters('ADLSSinkSecretName')]"
