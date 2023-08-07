@@ -1,0 +1,216 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  // Parameters are values that are configurable
+  "parameters": {
+    "AppId": {
+      "type": "string",
+      "metadata": {
+        "description": "The id of the Azure AD Application that has permission to run the ADF pipeline. This should be a multi tenant application."
+      }
+    },
+    "AppObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Object Id of the app registration (this can be found under App registrations -> Select you app -> Click on Managed application in local directory -> Object ID)."
+      }
+    },
+    "AzureActiveDirectoryTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
+      }
+    },
+    "DataFactoryName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the Azure Data Factory instance containing your pipeline logic."
+      }
+    },
+    "DataLakeStorageEndpoint": {
+      "type": "string",
+      "metadata": {
+        "description": "The endpoint of your Data Lake storage account (this can be found under Settings -> Endpoints -> Data Lake Storage primary endpoint in your Storage Account)."
+      }
+    },
+    "ADLSSinkKeyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the Azure Key Vault to be used for authenticating the ADLS Sink."
+      }
+    },
+    "ADLSSinkSecretName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the secret in the Azure Key Vault to be used for authenticating the ADLS Sink."
+      }
+    }
+  },
+  // Variables can apply functions to parameters or be hardcoded values.
+  "variables": {
+    // Name to give the Azure Data Factory pipeline created by the ARM template.
+    "factoryName": "[concat('M365-', uniqueString(resourceGroup().id))]",
+    // Name given to the storage account created
+    "destinationAdlsAccountName": "[concat('astore', uniqueString(resourceGroup().id))]",
+    "dataFactoryAppResourceId": "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+    "adlsSinkKeyVaultLink": "adlsSinkKeyVaultLink"
+  },
+  "resources": [
+    // Add Key Vault Secrets User role assignment to the ADLS Sink Key Vault.
+    {
+      "name": "[concat(parameters('ADLSSinkKeyVaultName'),'/Microsoft.Authorization/',guid(concat(parameters('ADLSSinkKeyVaultName'), parameters('DataFactoryName'), resourceGroup().id)))]",
+      "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "properties": {
+        "principalId": "[reference(variables('dataFactoryAppResourceId'), '2018-06-01', 'Full').identity.principalId]",
+        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '4633458b-17de-408a-b874-0445c86b69e6')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+      ]
+    },
+    // Add Azure Data Factory Resource
+    {
+      "name": "[parameters('DataFactoryName')]",
+      "apiVersion": "2018-06-01",
+      "type": "Microsoft.DataFactory/factories",
+      "comments": "Creates the ADF pipeline that copies data from O365 to the newly created destination ADLS.",
+      "dependsOn": [],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "location": "East US 2",
+      "resources": [
+        // Define Data Factory
+        {
+          "name": "[concat(parameters('DataFactoryName'), '/AzureSelfHosted')]",
+          "type": "Microsoft.DataFactory/factories/integrationRuntimes",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "type": "Managed",
+            "typeProperties": {
+              "computeProperties": {
+                "location": "East US 2",
+                "dataFlowProperties": {
+                  "computeType": "General",
+                  "coreCount": 8,
+                  "timeToLive": 10
+                }
+              }
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+          ]
+        },
+        // Define ADLS sink
+        {
+          "name": "[concat(parameters('DataFactoryName'), '/ADLSSink')]",
+          "type": "Microsoft.DataFactory/factories/linkedServices",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "annotations": [],
+            "type": "AzureBlobFS",
+            "typeProperties": {
+              "url": "[parameters('DataLakeStorageEndpoint')]",
+              "tenant": "[subscription().tenantId]",
+              "servicePrincipalId": "[parameters('AppId')]",
+              "servicePrincipalCredentialType": "ServicePrincipalKey",
+              "servicePrincipalCredential": {
+                "type": "AzureKeyVaultSecret",
+                "secretName": "[parameters('ADLSSinkSecretName')]",
+                "secretVersion": "",
+                "store": {
+                  "referenceName": "[variables('adlsSinkKeyVaultLink')]",
+                  "type": "LinkedServiceReference"
+                }
+              }
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+            "[variables('adlsSinkKeyVaultLink')]"
+          ]
+        },
+        // Define KV Link For Service Principal Secret
+        {
+          "name": "[concat(parameters('DataFactoryName'), '/', variables('adlsSinkKeyVaultLink'))]",
+          "type": "Microsoft.DataFactory/factories/linkedServices",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "annotations": [],
+            "type": "AzureKeyVault",
+            "typeProperties": {
+              "baseUrl": "[concat('https://', parameters('ADLSSinkKeyVaultName'), '.vault.azure.net/')]"
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+          ]
+        },
+        // Sink for Viva Insights data output
+        {
+          "name": "[concat(parameters('DataFactoryName'), '/VivaInsightsSink')]",
+          "type": "Microsoft.DataFactory/factories/datasets",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "linkedServiceName": {
+              "referenceName": "ADLSSink",
+              "type": "LinkedServiceReference"
+            },
+            "parameters": {
+              "AzureActiveDirectoryTenantId": {
+                "type": "string",
+                "defaultValue": "[parameters('AzureActiveDirectoryTenantId')]"
+              }
+            },
+            "annotations": [],
+            "type": "Binary",
+            "typeProperties": {
+              "location": {
+                "type": "AzureBlobFSLocation",
+                "folderPath": {
+                  "value": "@concat(pipeline().RunId, '/VivaInsights/', dataset().AzureActiveDirectoryTenantId)",
+                  "type": "Expression"
+                },
+                "fileSystem": "datasets"
+              }
+            }
+          },
+          "dependsOn": [
+            "ADLSSink",
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
+          ]
+        },
+        // Define O365 source linked service (this will be using MGDC)
+        {
+          "name": "[concat(parameters('DataFactoryName'), '/Office365Service')]",
+          "type": "Microsoft.DataFactory/factories/linkedServices",
+          "apiVersion": "2018-06-01",
+          "properties": {
+            "annotations": [],
+            "type": "Office365",
+            "typeProperties": {
+              "office365TenantId": "[parameters('AzureActiveDirectoryTenantId')]",
+              "servicePrincipalTenantId": "[subscription().tenantId]",
+              "servicePrincipalId": "[parameters('AppId')]",
+              "servicePrincipalKey": {
+                "type": "AzureKeyVaultSecret",
+                "store": {
+                  "referenceName": "[variables('adlsSinkKeyVaultLink')]",
+                  "type": "LinkedServiceReference"
+                },
+                "secretName": "[parameters('ADLSSinkSecretName')]"
+              }
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]",
+            "[variables('adlsSinkKeyVaultLink')]"
+          ]
+        }
+      ]
+    }
+  ]
+}
