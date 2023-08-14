@@ -271,8 +271,13 @@
             // TODO: Update your desired report structure (metric names and types) below.
             "structure": [
               {
-                "name": "After-hours collaboration hours",
-                "type": "float",
+                "name": "PersonId",
+                "type": "string",
+                "description": " "
+              },
+              {
+                "name": "MetricDate",
+                "type": "datetime",
                 "description": " "
               },
               {
