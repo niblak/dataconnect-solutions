@@ -4,16 +4,16 @@
   // Parameters are values that are configurable by the partner.
   "parameters": {
     "AzureActiveDirectoryTenantId": {
-        "type": "string",
-        "metadata": {
-          "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
-        }
+      "type": "string",
+      "metadata": {
+        "description": "The Azure Active Directory Tenant Id of the customer whose data needs to be extracted."
+      }
     },
     "AppId": {
-        "type": "string",
-        "metadata": {
-            "description": "The id of the Azure AD Application that has permission to run the ADF pipeline. This should be a multi tenant application."
-        }
+      "type": "string",
+      "metadata": {
+        "description": "The id of the Azure AD Application that has permission to run the ADF pipeline. This should be a multi tenant application."
+      }
     },
     "AppObjectId": {
       "type": "string",
@@ -28,11 +28,11 @@
       }
     },
     "DataLakeStorageName": {
-        "type": "string",
-        "metadata": {
-          "description": "The name of your Data Lake storage account."
-        }
-      },
+      "type": "string",
+      "metadata": {
+        "description": "The name of your Data Lake storage account."
+      }
+    },
     "DataLakeStorageEndpoint": {
       "type": "string",
       "metadata": {
@@ -52,10 +52,10 @@
       }
     },
     "DataSetName": {
-        "type": "string",
-        "metadata": {
-          "description": "The name of the any of the consented dataset that needs to be extracted via the Data Factory."
-        } 
+      "type": "string",
+      "metadata": {
+        "description": "The name of the consented dataset that needs to be extracted via the Data Factory."
+      }
     }
   },
   // Variables can apply functions to parameters or be hardcoded values.
@@ -64,7 +64,7 @@
     "dataFactoryAppResourceId": "[resourceId('Microsoft.DataFactory/factories', parameters('DataFactoryName'))]"
   },
   "resources": [
-    // Add Key Vault Secrets User role assignment to the App Secret Key Vault.
+    // Assign Key Vault Secrets User role for the ADF instance in the App Secret Key Vault.
     {
       "name": "[concat(parameters('AppSecretKeyVaultName'),'/Microsoft.Authorization/',guid(concat(parameters('AppSecretKeyVaultName'), parameters('DataFactoryName'), resourceGroup().id)))]",
       "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
@@ -80,14 +80,14 @@
     },
     // Create a container in the storage account
     {
-        "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
-        "apiVersion": "2021-01-01",
-        "name": "[concat(parameters('DataLakeStorageName'), '/default/datasets')]",
-        "properties": {
-          "defaultEncryptionScope": "$account-encryption-key",
-          "denyEncryptionScopeOverride": false,
-          "publicAccess": "None"
-        }
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2021-01-01",
+      "name": "[concat(parameters('DataLakeStorageName'), '/default/datasets')]",
+      "properties": {
+        "defaultEncryptionScope": "$account-encryption-key",
+        "denyEncryptionScopeOverride": false,
+        "publicAccess": "None"
+      }
     },
     // Add Contributor role assignment to the storage account container
     {
@@ -96,7 +96,7 @@
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('DataLakeStorageName'), 'default', 'datasets')]"
       ],
-      "name": "[concat(parameters('DataLakeStorageName'),'/Microsoft.Authorization/',guid(resourceGroup().id))]",
+      "name": "[concat(parameters('DataLakeStorageName'),'/Microsoft.Authorization/',guid(concat(deployment().name, resourceGroup().id)))]",
       "properties": {
         "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
         "principalId": "[parameters('AppObjectId')]"
@@ -109,7 +109,7 @@
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('DataLakeStorageName'), 'default', 'datasets')]"
       ],
-      "name": "[concat(parameters('DataLakeStorageName'), '/default/datasets/Microsoft.Authorization/', guid(concat('blobdatacontributor', resourceGroup().id)))]",
+      "name": "[concat(parameters('DataLakeStorageName'), '/default/datasets/Microsoft.Authorization/', guid(deployment().name, concat('blobdatacontributor', resourceGroup().id)))]",
       "properties": {
         "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
         "principalId": "[parameters('AppObjectId')]"
@@ -136,7 +136,7 @@
             "type": "Managed",
             "typeProperties": {
               "computeProperties": {
-                "location": "West US 2",
+                "location": "East US 2",
                 "dataFlowProperties": {
                   "computeType": "General",
                   "coreCount": 8,
@@ -271,19 +271,13 @@
             // TODO: Update your desired report structure (metric names and types) below.
             "structure": [
               {
-                "name": "PersonId",
-                "type": "string",
-                "description": " "
+                "name": "PersonId"
               },
               {
-                "name": "MetricDate",
-                "type": "datetime",
-                "description": " "
+                "name": "MetricDate"
               },
               {
-                "name": "After-hours email hours",
-                "type": "float",
-                "description": " "
+                "name": "After-hours email hours"
               }
             ],
             "typeProperties": {
