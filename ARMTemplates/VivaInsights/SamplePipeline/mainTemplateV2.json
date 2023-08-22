@@ -327,6 +327,7 @@
             "annotations": [],
             "parameters": {},
             "type": "Office365Table",
+            // TODO: Update your desired report structure (column/metric names) below.
             "structure": [
               {
                 "name": "PersonId"
